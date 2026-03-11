@@ -26,7 +26,6 @@ CFLAGS_Debug := \
 	-Wextra \
 	-Wno-unused-parameter \
 	-O3 \
-	-march=native \
 	-ffast-math \
 	-pthread \
 	-m64 \
@@ -42,7 +41,6 @@ CFLAGS_CC_Debug := \
 	-fno-strict-aliasing \
 	-std=gnu++20 \
 	-O3 \
-	-march=native \
 	-ffast-math \
 	-std=c++17 \
 	-pthread
@@ -78,7 +76,6 @@ CFLAGS_Release := \
 	-Wextra \
 	-Wno-unused-parameter \
 	-O3 \
-	-march=native \
 	-ffast-math \
 	-pthread \
 	-m64 \
@@ -94,7 +91,6 @@ CFLAGS_CC_Release := \
 	-fno-strict-aliasing \
 	-std=gnu++20 \
 	-O3 \
-	-march=native \
 	-ffast-math \
 	-std=c++17 \
 	-pthread
