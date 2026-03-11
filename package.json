@@ -1,5 +1,5 @@
 {
-  "name": "@volt/headless-rasterizer",
+  "name": "@voltstack/headless-rasterizer",
   "version": "1.0.0",
   "description": "Native Node.js addon for headless rasterization tasks.",
   "private": false,
