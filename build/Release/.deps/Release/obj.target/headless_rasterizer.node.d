@@ -1,0 +1,1 @@
+cmd_Release/obj.target/headless_rasterizer.node := g++ -o Release/obj.target/headless_rasterizer.node -shared -pthread -rdynamic -pthread -m64  -Wl,-soname=headless_rasterizer.node -Wl,--start-group Release/obj.target/headless_rasterizer/src/rasterizer.o -Wl,--end-group 

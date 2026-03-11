@@ -1,0 +1,1 @@
+cmd_Release/headless_rasterizer.node := ln -f "Release/obj.target/headless_rasterizer.node" "Release/headless_rasterizer.node" 2>/dev/null || (rm -rf "Release/headless_rasterizer.node" && cp -af "Release/obj.target/headless_rasterizer.node" "Release/headless_rasterizer.node")
