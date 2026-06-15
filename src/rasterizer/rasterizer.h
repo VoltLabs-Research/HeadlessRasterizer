@@ -213,7 +213,6 @@ private:
     struct GLBView{
         const float* pos = nullptr;
         const float* col = nullptr;
-        const float* normals = nullptr;
         const uint16_t* idx16 = nullptr;
         const uint32_t* idx32 = nullptr;
         size_t vertexCount = 0;
@@ -225,14 +224,6 @@ private:
     static int findInt(const std::string& json, const char* key){
         std::string k = std::string("\"") + key + "\":";
         size_t p = json.find(k);
-        if(p == std::string::npos) return -1;
-        return std::atoi(json.c_str() + p + k.size());
-    }
-
-    // Find integer value for a key starting from a given position
-    static int findIntFrom(const std::string& json, const char* key, size_t startPos){
-        std::string k = std::string("\"") + key + "\":";
-        size_t p = json.find(k, startPos);
         if(p == std::string::npos) return -1;
         return std::atoi(json.c_str() + p + k.size());
     }
@@ -270,9 +261,9 @@ private:
                     if (currentIndex == index) {
                         // Found our bufferView, parse it
                         std::string bvJson = json.substr(objStart, pos - objStart + 1);
-                        info.byteOffset = findIntFrom(bvJson, "byteOffset", 0);
+                        info.byteOffset = findInt(bvJson, "byteOffset");
                         if (info.byteOffset == (size_t)-1) info.byteOffset = 0;
-                        info.byteLength = findIntFrom(bvJson, "byteLength", 0);
+                        info.byteLength = findInt(bvJson, "byteLength");
                         if (info.byteLength == (size_t)-1) info.byteLength = 0;
                         return info;
                     }
@@ -348,9 +339,8 @@ private:
             // Layout for mesh with colors: BV0=positions, BV1=normals, BV2=colors, BV3=indices
             // Layout for mesh without colors: BV0=positions, BV1=normals, BV2=indices
             BufferViewInfo bvPos = parseBufferView(json, 0);
-            BufferViewInfo bvNorm = parseBufferView(json, 1);
             BufferViewInfo bvCol, bvIdx;
-            
+
             if(hasColors){
                 bvCol = parseBufferView(json, 2);
                 bvIdx = parseBufferView(json, 3);
@@ -365,7 +355,6 @@ private:
 
             // Validate offsets are within binary buffer bounds
             if(bvPos.byteOffset + bvPos.byteLength > binLen ||
-               bvNorm.byteOffset + bvNorm.byteLength > binLen ||
                bvIdx.byteOffset + bvIdx.byteLength > binLen){
                 return false;
             }
@@ -390,8 +379,7 @@ private:
 
             // Set pointers using bufferView offsets
             out.pos = (const float*)(bin + bvPos.byteOffset);
-            out.normals = (const float*)(bin + bvNorm.byteOffset);
-            
+
             if(hasColors && bvCol.byteLength > 0){
                 out.col = (const float*)(bin + bvCol.byteOffset);
             }
@@ -426,12 +414,6 @@ private:
 
     struct Mat4{
         float m[16];
-
-        static Mat4 identity(){
-            Mat4 r{};
-            r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1.f;
-            return r;
-        }
 
         static Mat4 lookAt(
             float eyeX,
