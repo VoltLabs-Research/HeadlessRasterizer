@@ -42,6 +42,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <malloc.h>
 #else
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -139,8 +140,8 @@ public:
         uint32_t* zBuffer = (uint32_t*) aligned_malloc(pixels * 4);
         uint8_t* colorBuffer = (uint8_t*) aligned_malloc(pixels * 4);
         if(!zBuffer || !colorBuffer){
-            free(zBuffer);
-            free(colorBuffer);
+            aligned_free(zBuffer);
+            aligned_free(colorBuffer);
             mm.close();
             return false;
         }
@@ -162,18 +163,30 @@ public:
         int ok = stbi_write_png(pngPath, width, height, 4, colorBuffer, width * 4);
 
         // Cleanup
-        free(zBuffer);
-        free(colorBuffer);
+        aligned_free(zBuffer);
+        aligned_free(colorBuffer);
         mm.close();
         return ok != 0;
     }
 
 private:
     static void* aligned_malloc(size_t size, size_t align = 32){
-        void* p = nullptr;
         size = (size + (align - 1)) & ~(align - 1);
+#if defined(_MSC_VER)
+        return _aligned_malloc(size, align);
+#else
+        void* p = nullptr;
         if(posix_memalign(&p, align, size) != 0) return nullptr;
         return p;
+#endif
+    }
+
+    static void aligned_free(void* p){
+#if defined(_MSC_VER)
+        _aligned_free(p);
+#else
+        free(p);
+#endif
     }
 
     static inline uint32_t read_u32(const void* p){
