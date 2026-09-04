@@ -1,1 +1,1 @@
-module.exports = require('./build/Release/headless_rasterizer.node');
+module.exports = require('node-gyp-build')(__dirname);
