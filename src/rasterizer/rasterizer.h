@@ -34,10 +34,20 @@
 #include <algorithm>
 #include <string>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 
 class Rasterizer{
 public:
@@ -173,9 +183,40 @@ private:
     }
 
     struct MMapFile{
-        int fd = -1;
         size_t size = 0;
         uint8_t* data = nullptr;
+
+#if defined(_WIN32)
+        HANDLE file = INVALID_HANDLE_VALUE;
+        HANDLE mapping = nullptr;
+
+        bool openRead(const char* path){
+            file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if(file == INVALID_HANDLE_VALUE) return false;
+
+            LARGE_INTEGER fileSize;
+            if(!GetFileSizeEx(file, &fileSize) || fileSize.QuadPart <= 0) return false;
+            size = (size_t) fileSize.QuadPart;
+
+            mapping = CreateFileMappingA(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+            if(!mapping) return false;
+
+            data = (uint8_t*) MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+            return data != nullptr;
+        }
+
+        void close(){
+            if(data) UnmapViewOfFile(data);
+            if(mapping) CloseHandle(mapping);
+            if(file != INVALID_HANDLE_VALUE) CloseHandle(file);
+
+            file = INVALID_HANDLE_VALUE;
+            mapping = nullptr;
+            size = 0;
+            data = nullptr;
+        }
+#else
+        int fd = -1;
 
         bool openRead(const char* path){
             fd = ::open(path, O_RDONLY);
@@ -203,6 +244,7 @@ private:
             size = 0;
             data = nullptr;
         }
+#endif
     };
 
     enum class GLBType{
