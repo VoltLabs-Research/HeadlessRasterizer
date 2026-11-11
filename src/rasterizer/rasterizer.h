@@ -20,43 +20,32 @@
  * SOFTWARE.
  */
 
+
 #pragma once
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-#include <cstdlib>
-#include <cstdint>
-#include <cstring>
-#include <cmath>
-#include <vector>
-#include <thread>
 #include <algorithm>
-#include <string>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <thread>
+#include <vector>
 
 #if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
 #include <malloc.h>
-#else
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
 #endif
 
+/**
+ * Renders a point cloud (xyz floats + RGBA8 colours) to a PNG with a z-buffered splat per point.
+ * The caller decodes the model; this class only draws, so it carries no knowledge of file formats.
+ */
 class Rasterizer{
 public:
-    /**
-     * @brief Rendering options.
-     */
     struct Options{
-        // Vertical field-of-view in degress.
+        // Vertical field of view in degrees.
         float fovDeg = 60.f;
         // Multiplicative scale factor applied to camera distance.
         float distScale = 1.f;
@@ -64,33 +53,20 @@ public:
         bool zUp = true;
     };
 
-    /**
-     * @brief Rasterize a GLB file to a PNG file
-     */
-    bool rasterize(
-        const char* glbPath,
+    bool rasterizePoints(
+        const float* pos,
+        const uint8_t* rgba,
+        size_t count,
         const char* pngPath,
         int width,
         int height,
         float azDeg,
         float elDeg,
-        const Options &opts
+        const Options& opts
     ){
-        // Map the GLB file and extract lightweight views into its buffers.
-        MMapFile mm;
-        GLBView glb{};
-        if(!parseGLB_MMap(glbPath, glb, mm)){
-            mm.close();
-            return false;
-        }
+        if(!pos || count == 0 || width <= 0 || height <= 0) return false;
 
-        if(glb.vertexCount == 0 || !glb.pos){
-            mm.close();
-            return false;
-        }
-
-        // Compute objects bounds to derive camera framing.
-        Bounds b = computeBoundsParallel(glb.pos, glb.vertexCount);
+        Bounds b = computeBoundsParallel(pos, count);
         float cx = (b.minX + b.maxX) * 0.5f;
         float cy = (b.minY + b.maxY) * 0.5f;
         float cz = (b.minZ + b.maxZ) * 0.5f;
@@ -98,7 +74,6 @@ public:
         float dx = b.maxX - b.minX, dy = b.maxY - b.minY, dz = b.maxZ - b.minZ;
         float radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
 
-        // Build camera matrices (lookAt + perspective) 
         float fovRad = opts.fovDeg * 3.1415926535f / 180.f;
         float aspect = (float)width / height;
 
@@ -122,351 +97,24 @@ public:
             dirZ = std::cos(el) * std::sin(az);
         }
 
-        float eyeX = cx + dirX * distance;
-        float eyeY = cy + dirY * distance;
-        float eyeZ = cz + dirZ * distance;
-
-        float upX = 0.f;
-        float upY = opts.zUp ? 0.f : 1.f;
-        float upZ = opts.zUp ? 1.f : 0.f;
-
-        Mat4 view = Mat4::lookAt(eyeX, eyeY, eyeZ, cx, cy, cz, upX, upY, upZ);
+        Mat4 view = Mat4::lookAt(
+            cx + dirX * distance, cy + dirY * distance, cz + dirZ * distance,
+            cx, cy, cz,
+            0.f, opts.zUp ? 0.f : 1.f, opts.zUp ? 1.f : 0.f
+        );
         Mat4 proj = Mat4::perspective(fovRad, aspect, znear, zfar);
         Mat4 mvp = proj * view;
 
-        // Allocate and initialize z-buffer + RGBA color buffer
         size_t pixels = (size_t)width * (size_t)height;
-        
-        uint32_t* zBuffer = (uint32_t*) aligned_malloc(pixels * 4);
-        uint8_t* colorBuffer = (uint8_t*) aligned_malloc(pixels * 4);
-        if(!zBuffer || !colorBuffer){
-            aligned_free(zBuffer);
-            aligned_free(colorBuffer);
-            mm.close();
-            return false;
-        }
+        std::vector<uint32_t> zBuffer(pixels, 0xFFFFFFFF);
+        std::vector<uint8_t> colorBuffer(pixels * 4, 0);
 
-        for(size_t i = 0; i < pixels; i++){
-            zBuffer[i] = 0xFFFFFFFF;
-        }
+        splat(pos, rgba, count, mvp, width, height, zBuffer.data(), colorBuffer.data());
 
-        std::memset(colorBuffer, 0, pixels * 4);
-
-        // Rasterize
-        if(glb.type == GLBType::TRIANGLES && glb.indexCount > 0){
-            rasterizeTriangles(glb, mvp, width, height, zBuffer, colorBuffer);
-        }else{
-            rasterizePoints(glb.pos, glb.col, glb.vertexCount, mvp, width, height, zBuffer, colorBuffer);
-        }
-
-        // Write PNG output
-        int ok = stbi_write_png(pngPath, width, height, 4, colorBuffer, width * 4);
-
-        // Cleanup
-        aligned_free(zBuffer);
-        aligned_free(colorBuffer);
-        mm.close();
-        return ok != 0;
+        return stbi_write_png(pngPath, width, height, 4, colorBuffer.data(), width * 4) != 0;
     }
 
 private:
-    static void* aligned_malloc(size_t size, size_t align = 32){
-        size = (size + (align - 1)) & ~(align - 1);
-#if defined(_MSC_VER)
-        return _aligned_malloc(size, align);
-#else
-        void* p = nullptr;
-        if(posix_memalign(&p, align, size) != 0) return nullptr;
-        return p;
-#endif
-    }
-
-    static void aligned_free(void* p){
-#if defined(_MSC_VER)
-        _aligned_free(p);
-#else
-        free(p);
-#endif
-    }
-
-    static inline uint32_t read_u32(const void* p){
-        uint32_t v;
-        std::memcpy(&v, p, 4);
-        return v;
-    }
-
-    struct MMapFile{
-        size_t size = 0;
-        uint8_t* data = nullptr;
-
-#if defined(_WIN32)
-        HANDLE file = INVALID_HANDLE_VALUE;
-        HANDLE mapping = nullptr;
-
-        bool openRead(const char* path){
-            file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if(file == INVALID_HANDLE_VALUE) return false;
-
-            LARGE_INTEGER fileSize;
-            if(!GetFileSizeEx(file, &fileSize) || fileSize.QuadPart <= 0) return false;
-            size = (size_t) fileSize.QuadPart;
-
-            mapping = CreateFileMappingA(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
-            if(!mapping) return false;
-
-            data = (uint8_t*) MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
-            return data != nullptr;
-        }
-
-        void close(){
-            if(data) UnmapViewOfFile(data);
-            if(mapping) CloseHandle(mapping);
-            if(file != INVALID_HANDLE_VALUE) CloseHandle(file);
-
-            file = INVALID_HANDLE_VALUE;
-            mapping = nullptr;
-            size = 0;
-            data = nullptr;
-        }
-#else
-        int fd = -1;
-
-        bool openRead(const char* path){
-            fd = ::open(path, O_RDONLY);
-            if(fd < 0) return false;
-
-            struct stat st;
-            if(fstat(fd, &st) != 0) return false;
-
-            size = (size_t) st.st_size;
-            data = (uint8_t*) mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
-
-            if(!data || data == MAP_FAILED){
-                data = nullptr;
-                return false;
-            }
-
-            return true;
-        }
-
-        void close(){
-            if(data) munmap(data, size);
-            if(fd >= 0) ::close(fd);
-
-            fd = -1;
-            size = 0;
-            data = nullptr;
-        }
-#endif
-    };
-
-    enum class GLBType{
-        POINTS,
-        TRIANGLES
-    };
-
-    struct GLBView{
-        const float* pos = nullptr;
-        const float* col = nullptr;
-        const uint16_t* idx16 = nullptr;
-        const uint32_t* idx32 = nullptr;
-        size_t vertexCount = 0;
-        size_t indexCount = 0;
-        size_t colorStride = 3; // 3 for VEC3 (RGB), 4 for VEC4 (RGBA)
-        GLBType type = GLBType::POINTS;
-    };
-
-    static int findInt(const std::string& json, const char* key){
-        std::string k = std::string("\"") + key + "\":";
-        size_t p = json.find(k);
-        if(p == std::string::npos) return -1;
-        return std::atoi(json.c_str() + p + k.size());
-    }
-
-    // Parse bufferView info: byteOffset and byteLength
-    struct BufferViewInfo {
-        size_t byteOffset = 0;
-        size_t byteLength = 0;
-    };
-
-    static BufferViewInfo parseBufferView(const std::string& json, int index) {
-        BufferViewInfo info;
-        // Find "bufferViews" array
-        size_t bvPos = json.find("\"bufferViews\"");
-        if (bvPos == std::string::npos) return info;
-        
-        // Find the opening bracket
-        size_t arrStart = json.find('[', bvPos);
-        if (arrStart == std::string::npos) return info;
-        
-        // Navigate to the nth bufferView object
-        size_t pos = arrStart + 1;
-        int currentIndex = 0;
-        int braceDepth = 0;
-        size_t objStart = 0;
-        
-        while (pos < json.size() && currentIndex <= index) {
-            char c = json[pos];
-            if (c == '{') {
-                if (braceDepth == 0) objStart = pos;
-                braceDepth++;
-            } else if (c == '}') {
-                braceDepth--;
-                if (braceDepth == 0) {
-                    if (currentIndex == index) {
-                        // Found our bufferView, parse it
-                        std::string bvJson = json.substr(objStart, pos - objStart + 1);
-                        info.byteOffset = findInt(bvJson, "byteOffset");
-                        if (info.byteOffset == (size_t)-1) info.byteOffset = 0;
-                        info.byteLength = findInt(bvJson, "byteLength");
-                        if (info.byteLength == (size_t)-1) info.byteLength = 0;
-                        return info;
-                    }
-                    currentIndex++;
-                }
-            }
-            pos++;
-        }
-        return info;
-    }
-
-    static bool parseGLB_MMap(const char* path, GLBView& out, MMapFile& mm){
-        if(!mm.openRead(path)) return false;
-        if(mm.size < 12) return false;
-
-        const uint8_t* p = mm.data;
-        if(read_u32(p) != 0x46546C67u || read_u32(p + 4) != 2u) return false;
-
-        size_t off = 12;
-        const uint8_t* jsonData = nullptr;
-        uint32_t jsonLen = 0;
-        const uint8_t* bin = nullptr;
-        uint32_t binLen = 0;
-
-        while(off + 8 <= mm.size){
-            uint32_t clen = read_u32(p + off);
-            uint32_t ctyp = read_u32(p + off + 4);
-
-            off += 8;
-            if(off + clen > mm.size) break;
-            
-            if(ctyp == 0x4E4F534Au){
-                jsonData = p + off;
-                jsonLen = clen;
-            }else if(ctyp == 0x004E4942u){
-                bin = p + off;
-                binLen = clen;
-            }
-
-            off += clen;
-        }
-
-        if(!bin || binLen == 0) return false;
-
-        std::string json((char*) jsonData, jsonLen);
-        
-        int mode = findInt(json, "mode");
-        bool isMesh = (mode == 4);
-        out.type = isMesh ? GLBType::TRIANGLES : GLBType::POINTS;
-
-        if(isMesh){
-            // Check if COLOR_0 exists and determine if it's VEC3 or VEC4
-            bool hasColors = (json.find("COLOR_0") != std::string::npos);
-            bool colorIsVec4 = false;
-            if(hasColors){
-                size_t colorAccPos = json.find("\"COLOR_0\"");
-                if(colorAccPos != std::string::npos){
-                    size_t vec4Pos = json.find("\"VEC4\"", colorAccPos);
-                    size_t vec3Pos = json.find("\"VEC3\"", colorAccPos);
-                    if(vec4Pos != std::string::npos && (vec3Pos == std::string::npos || vec4Pos < vec3Pos)){
-                        colorIsVec4 = true;
-                    }
-                }
-            }
-            out.colorStride = colorIsVec4 ? 4 : 3;
-
-            // Determine index type (5123 = uint16, 5125 = uint32)
-            size_t pos5123 = json.find("5123");
-            size_t pos5125 = json.find("5125");
-            bool useU16 = (pos5123 != std::string::npos && (pos5125 == std::string::npos || pos5123 < pos5125));
-
-            // Parse bufferViews to get correct offsets
-            // Layout for mesh with colors: BV0=positions, BV1=normals, BV2=colors, BV3=indices
-            // Layout for mesh without colors: BV0=positions, BV1=normals, BV2=indices
-            BufferViewInfo bvPos = parseBufferView(json, 0);
-            BufferViewInfo bvCol, bvIdx;
-
-            if(hasColors){
-                bvCol = parseBufferView(json, 2);
-                bvIdx = parseBufferView(json, 3);
-            }else{
-                bvIdx = parseBufferView(json, 2);
-            }
-
-            // Validate bufferView data - reject if no valid geometry
-            if(bvPos.byteLength == 0 || bvIdx.byteLength == 0){
-                return false;
-            }
-
-            // Validate offsets are within binary buffer bounds
-            if(bvPos.byteOffset + bvPos.byteLength > binLen ||
-               bvIdx.byteOffset + bvIdx.byteLength > binLen){
-                return false;
-            }
-            if(hasColors && bvCol.byteOffset + bvCol.byteLength > binLen){
-                return false;
-            }
-
-            // Calculate vertex count from position buffer (VEC3 floats)
-            out.vertexCount = bvPos.byteLength / (3 * sizeof(float));
-            
-            // Calculate index count
-            if(useU16){
-                out.indexCount = bvIdx.byteLength / sizeof(uint16_t);
-            }else{
-                out.indexCount = bvIdx.byteLength / sizeof(uint32_t);
-            }
-
-            // Reject empty meshes
-            if(out.vertexCount == 0 || out.indexCount == 0){
-                return false;
-            }
-
-            // Set pointers using bufferView offsets
-            out.pos = (const float*)(bin + bvPos.byteOffset);
-
-            if(hasColors && bvCol.byteLength > 0){
-                out.col = (const float*)(bin + bvCol.byteOffset);
-            }
-
-            if(out.indexCount > 0){
-                if(useU16){
-                    out.idx16 = (const uint16_t*)(bin + bvIdx.byteOffset);
-                }else{
-                    out.idx32 = (const uint32_t*)(bin + bvIdx.byteOffset);
-                }
-            }
-        }else{
-            // Point cloud: simple interleaved layout
-            size_t totalFloats = binLen / 4;
-            const float* floatData = (const float*) bin;
-            
-            if((totalFloats % 6) == 0){
-                out.vertexCount = totalFloats / 6;
-                out.pos = floatData;
-                out.col = floatData + (out.vertexCount * 3);
-            }else if((totalFloats % 3) == 0){
-                out.vertexCount = totalFloats / 3;
-                out.pos = floatData;
-                out.col = nullptr;
-            }else{
-                return false;
-            }
-        }
-
-        return out.pos != nullptr && out.vertexCount > 0;
-    }
-
     struct Mat4{
         float m[16];
 
@@ -572,12 +220,6 @@ private:
         return r;
     }
 
-    static inline uint8_t toU8(float x){
-        if(x < 0.f) x = 0.f;
-        if(x > 1.f) x = 1.f;
-        return (uint8_t)(x * 255.f + 0.5f);
-    }
-
     struct Bounds{
         float minX, minY, minZ;
         float maxX, maxY, maxZ;
@@ -625,9 +267,9 @@ private:
         return out;
     }
 
-    static void rasterizePoints(
+    static void splat(
         const float* pos,
-        const float* col,
+        const uint8_t* rgba,
         size_t n,
         const Mat4& mvp,
         int width,
@@ -653,25 +295,22 @@ private:
             int iy = (int)((1.f - (ndcY * 0.5f + 0.5f)) * height);
             if(ix < -pointRadius || ix >= width + pointRadius ||
                 iy < -pointRadius || iy >= height + pointRadius) continue;
-            
+
             uint32_t z24 = (uint32_t)((ndcZ + 1.f) * 0.5f * 16777215.f);
-            uint8_t R = col ? toU8(col[i * 3]) : 180;
-            uint8_t G = col ? toU8(col[i * 3 + 1]) : 180;
-            uint8_t B = col ? toU8(col[i * 3 + 2]) : 180;
-            
-            // Draw circular splat
+            uint8_t R = rgba ? rgba[i * 4] : 180;
+            uint8_t G = rgba ? rgba[i * 4 + 1] : 180;
+            uint8_t B = rgba ? rgba[i * 4 + 2] : 180;
+
             for(int dy = -pointRadius; dy <= pointRadius; dy++){
                 int yy = iy + dy;
                 if(yy < 0 || yy >= height) continue;
-                
+
                 for(int dx = -pointRadius; dx <= pointRadius; dx++){
                     int xx = ix + dx;
                     if(xx < 0 || xx >= width) continue;
-                    
-                    // Circle test
                     if(dx * dx + dy * dy > r2) continue;
 
-                    size_t idx = yy * width + xx;
+                    size_t idx = (size_t)yy * width + xx;
                     if(z24 < zBuffer[idx]){
                         zBuffer[idx] = z24;
                         colorBuffer[idx * 4] = R;
@@ -681,123 +320,6 @@ private:
                     }
                 }
             }
-        }
-    }
-
-    static inline float edgeFunc(float ax, float ay, float bx, float by, float cx, float cy){
-        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-    }
-
-    static void rasterizeTriangle(
-        float x0, float y0, float z0, uint8_t r0, uint8_t g0, uint8_t b0,
-        float x1, float y1, float z1, uint8_t r1, uint8_t g1, uint8_t b1,
-        float x2, float y2, float z2, uint8_t r2, uint8_t g2, uint8_t b2,
-        int width, int height, uint32_t* zBuffer, uint8_t* colorBuffer
-    ){
-        float area = edgeFunc(x0, y0, x1, y1, x2, y2);
-        if(area >= 0) return;
-        float invArea = 1.f / area;
-
-        int minX = std::max(0, (int)std::floor(std::min({x0, x1, x2})));
-        int maxX = std::min(width - 1, (int)std::ceil(std::max({x0, x1, x2})));
-        int minY = std::max(0, (int)std::floor(std::min({y0, y1, y2})));
-        int maxY = std::min(height - 1, (int)std::ceil(std::max({y0, y1, y2})));
-
-        for(int py = minY; py <= maxY; py++){
-            float pyf = py + 0.5f;
-            for(int px = minX; px <= maxX; px++){
-                float pxf = px + 0.5f;
-
-                float w0 = edgeFunc(x1, y1, x2, y2, pxf, pyf) * invArea;
-                float w1 = edgeFunc(x2, y2, x0, y0, pxf, pyf) * invArea;
-                float w2 = edgeFunc(x0, y0, x1, y1, pxf, pyf) * invArea;
-
-                if(w0 < 0 || w1 < 0 || w2 < 0) continue;
-
-                float z = z0 * w0 + z1 * w1 + z2 * w2;
-                uint32_t z24 = (uint32_t)(z * 16777215.f);
-
-                size_t idx = py * width + px;
-                if(z24 < zBuffer[idx]){
-                    zBuffer[idx] = z24;
-                    colorBuffer[idx * 4] = (uint8_t)(r0 * w0 + r1 * w1 + r2 * w2);
-                    colorBuffer[idx * 4 + 1] = (uint8_t)(g0 * w0 + g1 * w1 + g2 * w2);
-                    colorBuffer[idx * 4 + 2] = (uint8_t)(b0 * w0 + b1 * w1 + b2 * w2);
-                    colorBuffer[idx * 4 + 3] = 255;
-                }
-            }
-        }
-    }
-
-    static void rasterizeTriangles(
-        const GLBView& glb,
-        const Mat4& mvp,
-        int width,
-        int height,
-        uint32_t* zBuffer,
-        uint8_t* colorBuffer
-    ){
-        size_t triCount = glb.indexCount / 3;
-        if(triCount == 0) return;
-
-        // Keep z/color writes ordered to avoid non-deterministic buffer races.
-        for(size_t tri = 0; tri < triCount; tri++){
-            uint32_t i0, i1, i2;
-            if(glb.idx16){
-                i0 = glb.idx16[tri * 3];
-                i1 = glb.idx16[tri * 3 + 1]; 
-                i2 = glb.idx16[tri * 3 + 2];
-            }else if(glb.idx32){
-                i0 = glb.idx32[tri * 3];
-                i1 = glb.idx32[tri * 3 + 1];
-                i2 = glb.idx32[tri * 3 + 2];
-            }else{
-                continue;
-            }
-
-            if(i0 >= glb.vertexCount || i1 >= glb.vertexCount || i2 >= glb.vertexCount) continue;
-        
-            Vec4 v0 = project4(mvp, glb.pos[i0 * 3], glb.pos[i0 * 3 + 1], glb.pos[i0 * 3 + 2]);
-            Vec4 v1 = project4(mvp, glb.pos[i1 * 3], glb.pos[i1 * 3 + 1], glb.pos[i1 * 3 + 2]);
-            Vec4 v2 = project4(mvp, glb.pos[i2 * 3], glb.pos[i2 * 3 + 1], glb.pos[i2 * 3 + 2]);
-
-            if(v0.w <= 1e-6f || v1.w <= 1e-6f || v2.w <= 1e-6f) continue;
-
-            float x0 = (v0.x / v0.w * 0.5f + 0.5f) * width;
-            float y0 = (1.f - (v0.y / v0.w * 0.5f + 0.5f)) * height;
-            float z0 = (v0.z / v0.w + 1.f) * 0.5f;
-
-            float x1 = (v1.x / v1.w * 0.5f + 0.5f) * width;
-            float y1 = (1.f - (v1.y / v1.w * 0.5f + 0.5f)) * height;
-            float z1 = (v1.z / v1.w + 1.f) * 0.5f;
-
-            float x2 = (v2.x / v2.w * 0.5f + 0.5f) * width;
-            float y2 = (1.f - (v2.y / v2.w * 0.5f + 0.5f)) * height;
-            float z2 = (v2.z / v2.w + 1.f) * 0.5f;
-
-            uint8_t r0 = 180, g0 = 180, b0 = 180;
-            uint8_t r1 = 180, g1 = 180, b1 = 180;
-            uint8_t r2 = 180, g2 = 180, b2 = 180;
-
-            if(glb.col){
-                size_t stride = glb.colorStride;
-                r0 = toU8(glb.col[i0 * stride]); 
-                g0 = toU8(glb.col[i0 * stride + 1]); 
-                b0 = toU8(glb.col[i0 * stride + 2]);
-
-                r1 = toU8(glb.col[i1 * stride]); 
-                g1 = toU8(glb.col[i1 * stride + 1]); 
-                b1 = toU8(glb.col[i1 * stride + 2]);
-
-                r2 = toU8(glb.col[i2 * stride]); 
-                g2 = toU8(glb.col[i2 * stride + 1]); 
-                b2 = toU8(glb.col[i2 * stride + 2]);
-            }
-
-            rasterizeTriangle(x0, y0, z0, r0, g0, b0,
-                              x1, y1, z1, r1, g1, b1,
-                              x2, y2, z2, r2, g2, b2,
-                              width, height, zBuffer, colorBuffer);
         }
     }
 };
