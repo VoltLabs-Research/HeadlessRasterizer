@@ -1,6 +1,6 @@
 {
   "name": "@voltstack/headless-rasterizer",
-  "version": "1.1.1",
+  "version": "2.0.0",
   "description": "Native Node.js addon that renders point clouds to PNG previews.",
   "private": false,
   "gypfile": true,
