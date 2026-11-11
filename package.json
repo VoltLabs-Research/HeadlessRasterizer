@@ -1,7 +1,7 @@
 {
   "name": "@voltstack/headless-rasterizer",
   "version": "1.1.1",
-  "description": "Native Node.js addon for headless rasterization tasks.",
+  "description": "Native Node.js addon that renders point clouds to PNG previews.",
   "private": false,
   "gypfile": true,
   "main": "index.js",
@@ -9,6 +9,7 @@
   "files": [
     "binding.gyp",
     "index.js",
+    "index.d.ts",
     "src/**/*",
     "prebuilds/**/*",
     "LICENSE"
@@ -28,5 +29,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/VoltLabs-Research/HeadlessRasterizer.git"
-  }
+  },
+  "types": "index.d.ts"
 }
