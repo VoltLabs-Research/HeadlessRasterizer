@@ -5,7 +5,10 @@
       "sources": [
         "src/rasterizer.cpp"
       ],
-      "include_dirs": [],
+      "include_dirs": [
+        "include",
+        "third_party/stb"
+      ],
       "defines": [
         "NAPI_VERSION=8",
         "NAPI_CPP_EXCEPTIONS"

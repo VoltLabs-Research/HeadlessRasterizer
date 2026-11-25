@@ -1,6 +1,6 @@
 #include <node_api.h>
 #include <string>
-#include "rasterizer/rasterizer.h"
+#include "rasterizer.h"
 
 namespace NapiBinding {
 

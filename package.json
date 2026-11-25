@@ -10,7 +10,9 @@
     "binding.gyp",
     "index.js",
     "index.d.ts",
+    "include/**/*",
     "src/**/*",
+    "third_party/**/*",
     "prebuilds/**/*",
     "LICENSE"
   ],
