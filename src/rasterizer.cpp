@@ -1,10 +1,9 @@
-#include <node_api.h>
-#include <string>
+#include "napi_binding.h"
 #include "rasterizer.h"
 
 namespace NapiBinding {
 
-static std::string napiGetString(napi_env env, napi_value v) {
+std::string napiGetString(napi_env env, napi_value v) {
     size_t len = 0;
     napi_get_value_string_utf8(env, v, nullptr, 0, &len);
     std::string s(len, '\0');
@@ -12,14 +11,12 @@ static std::string napiGetString(napi_env env, napi_value v) {
     return s;
 }
 
-static napi_value fail(napi_env env, const char* message) {
+napi_value fail(napi_env env, const char* message) {
     napi_throw_type_error(env, nullptr, message);
     return nullptr;
 }
 
-// rasterizePoints(positions: Float32Array, colors: Uint8Array | null, pngPath, width, height,
-//                 azimuthDeg, elevationDeg, { fov, distScale, zUp }): boolean
-static napi_value RasterizePoints(napi_env env, napi_callback_info info) {
+napi_value RasterizePoints(napi_env env, napi_callback_info info) {
     size_t argc = 8;
     napi_value args[8];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -74,7 +71,7 @@ static napi_value RasterizePoints(napi_env env, napi_callback_info info) {
     return res;
 }
 
-static napi_value Init(napi_env env, napi_value exports) {
+napi_value Init(napi_env env, napi_value exports) {
     napi_value fn;
     napi_create_function(env, nullptr, 0, RasterizePoints, nullptr, &fn);
     napi_set_named_property(env, exports, "rasterizePoints", fn);
